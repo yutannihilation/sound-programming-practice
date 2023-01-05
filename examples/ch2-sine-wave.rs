@@ -27,22 +27,23 @@ fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyh
 where
     T: cpal::Sample,
 {
-    let hz = signal::rate(config.sample_rate.0 as f64).const_hz(440.0);
-    let one_sec = config.sample_rate.0 as usize;
-
-    let channels = config.channels as usize;
-
     println!("sample rate: {}", config.sample_rate.0);
     println!("channels: {}", config.channels);
 
-    let mut synth = hz.sine().take(one_sec);
+    let sine = signal::rate(config.sample_rate.0 as f64)
+        .const_hz(440.0)
+        .sine();
+
+    // taking the same number of samples as the sample rate = 1 second
+    let mut frames = sine.take(config.sample_rate.0 as usize);
 
     let (complete_tx, complete_rx) = mpsc::sync_channel::<()>(1);
 
+    let channels = config.channels as usize;
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            write_data(data, channels, &complete_tx, &mut synth);
+            write_data(data, channels, &complete_tx, &mut frames);
         },
         |err| eprintln!("{err}"),
     )?;
@@ -59,12 +60,12 @@ fn write_data<T>(
     output: &mut [T],
     channels: usize,
     complete_rx: &mpsc::SyncSender<()>,
-    signal: &mut dyn Iterator<Item = f64>,
+    frames: &mut dyn Iterator<Item = f64>,
 ) where
     T: cpal::Sample,
 {
     for frame in output.chunks_mut(channels) {
-        let sample = match signal.next() {
+        let sample = match frames.next() {
             Some(sample) => sample.to_sample::<f32>(),
             None => {
                 complete_rx.try_send(()).ok();
