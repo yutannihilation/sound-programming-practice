@@ -86,7 +86,11 @@ where
     let env = signal::from_iter(Env::new(total_frames, ATTACK, RELEASE));
 
     // taking the same number of samples as the sample rate = 1 second
-    let mut frames = sine.mul_amp(env).take(total_frames + 1000);
+    let mut frames = sine
+        .mul_amp(env)
+        .take(total_frames)
+        // To prevent click noise at the end, fill some silence
+        .chain(signal::equilibrium().take(1000));
 
     let (complete_tx, complete_rx) = mpsc::sync_channel::<()>(1);
 
