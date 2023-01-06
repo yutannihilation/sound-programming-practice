@@ -7,6 +7,53 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp::{signal, Sample, Signal};
 use std::sync::mpsc;
 
+const ATTACK: usize = 1000;
+const RELEASE: usize = 1000;
+
+struct Env {
+    cur_frame: usize,
+    total_frames: usize,
+    attack_frames: usize,
+    release_frames: usize,
+}
+
+impl Env {
+    fn new(total_frames: usize, attack_frames: usize, release_frames: usize) -> Self {
+        Self {
+            cur_frame: 0,
+            total_frames,
+            attack_frames,
+            release_frames,
+        }
+    }
+}
+
+impl Iterator for Env {
+    type Item = f64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.cur_frame += 1;
+
+        // already ended
+        if self.cur_frame > self.total_frames {
+            return None;
+        }
+
+        // release phase
+        if self.cur_frame > self.total_frames - self.release_frames {
+            return Some((self.total_frames - self.cur_frame) as f64 / self.release_frames as f64);
+        }
+
+        // attack phase
+        if self.cur_frame <= self.attack_frames {
+            return Some(self.cur_frame as f64 / self.attack_frames as f64);
+        }
+
+        // sustain phase
+        Some(1.0)
+    }
+}
+
 fn main() -> Result<(), anyhow::Error> {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
@@ -34,8 +81,12 @@ where
         .const_hz(440.0)
         .sine();
 
+    let total_frames = config.sample_rate.0 as usize;
+
+    let env = signal::from_iter(Env::new(total_frames, ATTACK, RELEASE));
+
     // taking the same number of samples as the sample rate = 1 second
-    let mut frames = sine.take(config.sample_rate.0 as usize);
+    let mut frames = sine.mul_amp(env).take(total_frames + 1000);
 
     let (complete_tx, complete_rx) = mpsc::sync_channel::<()>(1);
 
