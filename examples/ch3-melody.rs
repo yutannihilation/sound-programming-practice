@@ -4,12 +4,11 @@
 // - https://github.com/RustAudio/cpal/blob/master/examples/record_wav.rs
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use dasp::{
-    signal::{self, from_iter},
-    Sample, Signal,
-};
-use std::sync::mpsc;
+use dasp::{signal, Sample, Signal};
+use std::{cell::RefCell, rc::Rc, sync::mpsc};
 
+#[rustfmt::skip]
+const SEQ: [bool; 8] = [true; 8];
 #[rustfmt::skip]
 const TRACK1: [f64; 8] = [659.26, 587.33, 523.25, 493.88, 440.00, 392.00, 440.00, 493.88];
 #[rustfmt::skip]
@@ -19,46 +18,95 @@ const ATTACK: usize = 1000;
 const RELEASE: usize = 1000;
 
 struct Env {
+    seq: Vec<bool>,
     cur_frame: usize,
-    total_frames: usize,
+    note_on: bool,
+    step_length: usize,
     attack_frames: usize,
     release_frames: usize,
 }
 
 impl Env {
-    fn new(total_frames: usize, attack_frames: usize, release_frames: usize) -> Self {
+    fn new(
+        seq: Vec<bool>,
+        step_length: usize,
+        attack_frames: usize,
+        release_frames: usize,
+    ) -> Self {
         Self {
+            seq,
             cur_frame: 0,
-            total_frames,
+            note_on: false,
+            step_length,
             attack_frames,
             release_frames,
         }
     }
 }
 
-impl Iterator for Env {
-    type Item = f64;
+impl Signal for Env {
+    type Frame = f64;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Self::Frame {
         self.cur_frame += 1;
 
-        // already ended
-        if self.cur_frame > self.total_frames {
-            return None;
+        // proceed to the next step
+        if self.cur_frame > self.step_length {
+            self.cur_frame -= self.step_length;
+            self.note_on = self.seq.pop().unwrap_or(false);
+        }
+
+        if !self.note_on {
+            return 0.0;
         }
 
         // release phase
-        if self.cur_frame > self.total_frames - self.release_frames {
-            return Some((self.total_frames - self.cur_frame) as f64 / self.release_frames as f64);
+        if self.cur_frame > self.step_length - self.release_frames {
+            return (self.step_length - self.cur_frame) as f64 / self.release_frames as f64;
         }
 
         // attack phase
         if self.cur_frame <= self.attack_frames {
-            return Some(self.cur_frame as f64 / self.attack_frames as f64);
+            return self.cur_frame as f64 / self.attack_frames as f64;
         }
 
         // sustain phase
-        Some(1.0)
+        1.0
+    }
+}
+
+struct Track {
+    seq: Vec<f64>,
+    step_length: usize,
+    cur_frame: usize,
+    note: f64,
+}
+
+impl Track {
+    fn new(seq: Vec<f64>, step_length: usize) -> Self {
+        Self {
+            seq,
+            step_length,
+            cur_frame: 0,
+            note: 0.0,
+        }
+    }
+}
+
+impl Signal for Track {
+    type Frame = f64;
+
+    fn next(&mut self) -> Self::Frame {
+        self.cur_frame += 1;
+
+        // proceed to the next step
+        if self.cur_frame > self.step_length {
+            self.cur_frame -= self.step_length;
+            self.note = self.seq.pop().unwrap_or(0.0);
+            println!("note: {}", self.note);
+        }
+
+        self.note
     }
 }
 
@@ -85,23 +133,22 @@ where
     println!("sample rate: {}", config.sample_rate.0);
     println!("channels: {}", config.channels);
 
-    let total_frames = config.sample_rate.0 as usize;
+    let step_length = config.sample_rate.0 as usize;
 
-    let f = |f| {
-        let env = signal::from_iter(Env::new(total_frames, ATTACK, RELEASE));
-        signal::rate(config.sample_rate.0 as f64)
-            .const_hz(f)
-            .sine()
-            .mul_amp(env)
-            .take(total_frames)
-    };
+    let track1 = signal::rate(config.sample_rate.0 as f64)
+        .hz(Track::new(TRACK1.to_vec(), step_length))
+        .sine();
 
-    let track1 = signal::from_iter(TRACK1.map(f).into_iter().flatten());
-    let track2 = signal::from_iter(TRACK2.map(f).into_iter().flatten());
+    let track2 = signal::rate(config.sample_rate.0 as f64)
+        .hz(Track::new(TRACK2.to_vec(), step_length))
+        .sine();
+
+    let env = Env::new(SEQ.to_vec(), step_length, ATTACK, RELEASE);
 
     let mut frames = track1
         .add_amp(track2)
-        .until_exhausted()
+        .mul_amp(env)
+        .take(step_length * SEQ.len())
         .chain(signal::equilibrium().take(1000));
 
     let (complete_tx, complete_rx) = mpsc::sync_channel::<()>(1);
