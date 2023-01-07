@@ -28,15 +28,16 @@ struct Env {
 
 impl Env {
     fn new(
-        seq: Vec<bool>,
+        mut seq: Vec<bool>,
         step_length: usize,
         attack_frames: usize,
         release_frames: usize,
     ) -> Self {
+        let note_on = seq.pop().unwrap_or(false);
         Self {
             seq,
             cur_frame: 0,
-            note_on: false,
+            note_on,
             step_length,
             attack_frames,
             release_frames,
@@ -83,12 +84,15 @@ struct Track {
 }
 
 impl Track {
-    fn new(seq: Vec<f64>, step_length: usize) -> Self {
+    fn new(mut seq: Vec<f64>, step_length: usize) -> Self {
+        let note = seq.pop().unwrap_or(0.0);
+        println!("note: {}", note);
+
         Self {
             seq,
             step_length,
             cur_frame: 0,
-            note: 0.0,
+            note,
         }
     }
 }
