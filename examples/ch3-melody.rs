@@ -5,7 +5,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp::{signal, Sample, Signal};
-use std::{cell::RefCell, rc::Rc, sync::mpsc};
+use std::sync::mpsc;
 
 #[rustfmt::skip]
 const SEQ: [bool; 8] = [true; 8];
