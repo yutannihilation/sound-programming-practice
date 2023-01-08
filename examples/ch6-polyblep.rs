@@ -90,6 +90,7 @@ impl<S: Step> PolyBlepSaw<S> {
     }
 }
 
+// This implementation is derived from https://github.com/electro-smith/DaisySP/blob/master/Source/Synthesis/oscillator.cpp
 impl<S: Step> Signal for PolyBlepSaw<S> {
     type Frame = f64;
 
