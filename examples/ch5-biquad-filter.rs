@@ -72,21 +72,16 @@ impl Signal for Env {
     }
 }
 
-struct LPF<S: Signal<Frame = f64>> {
+struct Lpf<S: Signal<Frame = f64>> {
     signal: S,
     fs: f64, // sampling rate
     fc: f64,
     q: f64,
-    // buffer
-    x0: f64,
-    x1: f64,
-    x2: f64,
-    y0: f64,
-    y1: f64,
-    y2: f64,
+    before: dasp::ring_buffer::Fixed<[f64; 2]>,
+    after: dasp::ring_buffer::Fixed<[f64; 2]>,
 }
 
-impl<S: Signal<Frame = f64>> LPF<S> {
+impl<S: Signal<Frame = f64>> Lpf<S> {
     fn new(signal: S, fs: f64, fc: f64, q: f64) -> Self {
         println!("central frequency: {fc}");
         println!("Q: {q}");
@@ -96,42 +91,39 @@ impl<S: Signal<Frame = f64>> LPF<S> {
             fs,
             fc,
             q,
-            x0: 0.0,
-            x1: 0.0,
-            x2: 0.0,
-            y0: 0.0,
-            y1: 0.0,
-            y2: 0.0,
+            before: dasp::ring_buffer::Fixed::from([0.0; 2]),
+            after: dasp::ring_buffer::Fixed::from([0.0; 2]),
         }
     }
 }
 
-impl<S: Signal<Frame = f64>> Signal for LPF<S> {
+impl<S: Signal<Frame = f64>> Signal for Lpf<S> {
     type Frame = f64;
 
     // c.f. https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html
     fn next(&mut self) -> Self::Frame {
-        let mut out = self.signal.next();
-        // shift
-        self.x2 = self.x1;
-        self.x1 = self.x0;
-        self.x0 = out;
-
-        self.y2 = self.y1;
-        self.y1 = self.y0;
+        let orig = self.signal.next();
 
         let pi = std::f64::consts::PI as Self::Frame;
         let omega0 = 2.0 * pi * self.fc / self.fs;
         let alpha = omega0.sin() / 2.0 / self.q;
 
-        out = (1.0 - omega0.cos()) / 2.0 * self.x0
-            + (1.0 - omega0.cos()) * self.x1
-            + (1.0 - omega0.cos()) / 2.0 * self.x2
-            - (-2.0 * omega0.cos()) * self.y1
-            - (1.0 - alpha) * self.y2;
+        // Since `push()` pushes on to the back of the queue,
+        //
+        //   - before[1]: input of 1-step before
+        //   - before[0]: input of 2-step before
+        //   - after[1]:  output of 1-step before
+        //   - after[0]:  output of 2-step before
+        //
+        let mut out = (1.0 - omega0.cos()) / 2.0 * orig
+            + (1.0 - omega0.cos()) * self.before[1]
+            + (1.0 - omega0.cos()) / 2.0 * self.before[0]
+            - (-2.0 * omega0.cos()) * self.after[1]
+            - (1.0 - alpha) * self.after[0];
         out /= 1.0 + alpha;
 
-        self.y0 = out;
+        self.before.push(orig);
+        self.after.push(out);
 
         out
     }
@@ -169,7 +161,7 @@ where
     let env = Env::new(SEQ.to_vec(), step_length, ATTACK, RELEASE);
 
     // taking the same number of samples as the sample rate = 1 second
-    let mut frames = LPF::new(
+    let mut frames = Lpf::new(
         square,
         config.sample_rate.0 as _,
         500.0,
