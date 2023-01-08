@@ -78,27 +78,30 @@ struct LPF<S: Signal<Frame = f64>> {
     fc: f64,
     q: f64,
     // buffer
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a0: f64,
-    a1: f64,
-    a2: f64,
+    x0: f64,
+    x1: f64,
+    x2: f64,
+    y0: f64,
+    y1: f64,
+    y2: f64,
 }
 
 impl<S: Signal<Frame = f64>> LPF<S> {
     fn new(signal: S, fs: f64, fc: f64, q: f64) -> Self {
+        println!("central frequency: {fc}");
+        println!("Q: {q}");
+
         Self {
             signal,
             fs,
             fc,
             q,
-            b0: 0.0,
-            b1: 0.0,
-            b2: 0.0,
-            a0: 0.0,
-            a1: 0.0,
-            a2: 0.0,
+            x0: 0.0,
+            x1: 0.0,
+            x2: 0.0,
+            y0: 0.0,
+            y1: 0.0,
+            y2: 0.0,
         }
     }
 }
@@ -110,25 +113,25 @@ impl<S: Signal<Frame = f64>> Signal for LPF<S> {
     fn next(&mut self) -> Self::Frame {
         let mut out = self.signal.next();
         // shift
-        self.b2 = self.b1;
-        self.b1 = self.b0;
-        self.b0 = out;
+        self.x2 = self.x1;
+        self.x1 = self.x0;
+        self.x0 = out;
 
-        self.a2 = self.a1;
-        self.a1 = self.a0;
+        self.y2 = self.y1;
+        self.y1 = self.y0;
 
         let pi = std::f64::consts::PI as Self::Frame;
         let omega0 = 2.0 * pi * self.fc / self.fs;
         let alpha = omega0.sin() / 2.0 / self.q;
 
-        out = (1.0 - omega0.cos()) / 2.0 * self.b0
-            + (1.0 - omega0.cos()) * self.b1
-            + (1.0 - omega0.cos()) / 2.0 * self.b2
-            - (-2.0 * omega0.cos()) * self.a1
-            - (1.0 - alpha) * self.a2;
+        out = (1.0 - omega0.cos()) / 2.0 * self.x0
+            + (1.0 - omega0.cos()) * self.x1
+            + (1.0 - omega0.cos()) / 2.0 * self.x2
+            - (-2.0 * omega0.cos()) * self.y1
+            - (1.0 - alpha) * self.y2;
         out /= 1.0 + alpha;
 
-        self.a0 = out;
+        self.y0 = out;
 
         out
     }
